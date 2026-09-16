@@ -1,0 +1,18 @@
+{
+  "name": "enrutador-hmo",
+  "version": "1.0.0",
+  "description": "Enrutador HMO - App de ruteo y entregas para reparto en Hermosillo",
+  "main": "index.js",
+  "scripts": {
+    "build": "echo 'Sin paso de build: HTML estático servido desde /www'"
+  },
+  "author": "alfredosv91San",
+  "license": "MIT",
+  "dependencies": {
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/android": "^8.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0"
+  }
+}

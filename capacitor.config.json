@@ -1,0 +1,8 @@
+{
+  "appId": "com.hmo.enrutador",
+  "appName": "Enrutador HMO",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}

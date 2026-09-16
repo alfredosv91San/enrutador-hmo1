@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Enrutador HMO Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        html, body, #map { height: 100%; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-gray-100 overflow-hidden select-none">
+
+    <div id="map" class="w-full h-full absolute inset-0 z-0"></div>
+
+    <button id="gear-btn" onclick="toggleConfig()" class="absolute top-4 left-4 z-10 bg-white/90 backdrop-blur-md p-3 rounded-full shadow-lg border border-gray-200 text-gray-700 active:scale-95 transition-all">
+        <i class="fa-solid fa-gear text-lg"></i>
+    </button>
+
+    <div id="search-panel" class="absolute top-4 right-4 left-16 z-10 max-w-md md:mx-auto bg-white/95 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-gray-100 flex flex-col gap-3">
+        <div class="flex items-center gap-2 bg-gray-100 p-3 rounded-xl border border-gray-200">
+            <i class="fa-solid fa-magnifying-glass text-gray-400"></i>
+            <input id="search-input" type="text" placeholder="Buscar dirección (o usa voz del teclado)..." class="bg-transparent w-full focus:outline-none text-sm font-medium text-gray-800">
+        </div>
+
+        <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 bg-gray-100 p-2.5 rounded-xl border border-gray-200 w-1/2">
+                <i class="fa-solid fa-box text-blue-500 text-xs"></i>
+                <input id="pkg-number" type="number" placeholder="N° Paquete" class="bg-transparent w-full focus:outline-none text-sm font-bold text-gray-800">
+            </div>
+            <button onclick="agregarParadaManual()" class="w-1/2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold p-2.5 rounded-xl shadow-md active:scale-95 transition-all flex items-center justify-center gap-2">
+                <i class="fa-solid fa-plus"></i> Añadir Parada
+            </button>
+        </div>
+    </div>
+
+    <!-- Botones flotantes: GPS e Historial -->
+    <div id="floating-actions" class="absolute right-4 z-10 flex flex-col gap-3" style="top: 132px;">
+        <button onclick="activarGPS()" id="gps-btn" class="bg-white/90 backdrop-blur-md p-3 rounded-full shadow-lg border border-gray-200 text-blue-600 active:scale-95 transition-all">
+            <i class="fa-solid fa-location-crosshairs text-lg"></i>
+        </button>
+        <button onclick="abrirHistorial()" class="bg-white/90 backdrop-blur-md p-3 rounded-full shadow-lg border border-gray-200 text-gray-700 active:scale-95 transition-all">
+            <i class="fa-solid fa-clock-rotate-left text-lg"></i>
+        </button>
+    </div>
+
+    <!-- Barra de navegación activa (modo Conducir) -->
+    <div id="nav-bar" class="hidden absolute top-0 inset-x-0 z-30 bg-slate-900 text-white p-4 flex flex-col gap-3 shadow-xl">
+        <div class="flex items-center gap-3">
+            <div id="nav-pkg-badge" class="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center font-black text-sm shrink-0">-</div>
+            <div class="flex-1 min-w-0">
+                <p class="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Navegando a</p>
+                <p id="nav-address" class="text-sm font-bold truncate">-</p>
+            </div>
+            <button onclick="cerrarNavegacion()" class="text-slate-400 hover:text-white p-2"><i class="fa-solid fa-xmark text-lg"></i></button>
+        </div>
+        <div class="flex gap-3">
+            <button onclick="marcarEntrega('ENTREGADO')" class="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white font-black py-4 rounded-2xl text-base shadow-lg active:scale-95 transition-all">
+                ✅ ENTREGADO
+            </button>
+            <button onclick="marcarEntrega('FALLIDO')" class="flex-1 bg-red-500 hover:bg-red-600 text-white font-black py-4 rounded-2xl text-base shadow-lg active:scale-95 transition-all">
+                ❌ FALLIDO
+            </button>
+        </div>
+    </div>
+
+    <div id="route-panel" class="absolute bottom-0 inset-x-0 z-10 bg-white/95 backdrop-blur-md rounded-t-3xl shadow-[0_-8px_30px_rgb(0,0,0,0.12)] border-t border-gray-100 flex flex-col transition-all duration-300 transform h-[40vh]">
+        <div onclick="togglePanelDimension()" class="w-full flex justify-center py-3 cursor-pointer active:bg-gray-50 rounded-t-3xl">
+            <div class="w-12 h-1.5 bg-gray-300 rounded-full"></div>
+        </div>
+
+        <div class="px-5 pb-3 flex justify-between items-center border-b border-gray-100">
+            <div>
+                <h2 class="text-base font-extrabold text-gray-900 flex items-center gap-2">
+                    <i class="fa-solid fa-route text-blue-600"></i> Reparto Diario
+                </h2>
+                <p id="counter-text" class="text-xs text-gray-500 font-medium">0 paradas cargadas</p>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="vaciarTodo()" class="text-xs font-bold text-red-500 bg-red-50 px-3 py-2 rounded-xl active:scale-95 transition-all">
+                    Vaciar
+                </button>
+                <button onclick="optimizarRutaCompleta()" class="text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-xl shadow-md active:scale-95 transition-all flex items-center gap-1.5">
+                    <i class="fa-solid fa-bolt"></i> Optimizar 100
+                </button>
+            </div>
+        </div>
+
+        <div id="paradas-lista" class="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar bg-gray-50/50">
+            <div id="empty-state" class="text-center py-8 text-gray-400">
+                <i class="fa-solid fa-map-location-dot text-4xl mb-2 text-gray-300"></i>
+                <p class="text-xs font-medium">No hay direcciones en la lista.<br>Busca una arriba para comenzar.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="config-modal" class="hidden fixed inset-0 bg-black/50 z-20 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-gray-100 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200">
+            <div class="flex justify-between items-center">
+                <h3 class="text-lg font-black text-gray-900"><i class="fa-solid fa-sliders text-blue-600 mr-2"></i>Configuración</h3>
+                <button onclick="toggleConfig()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Google Maps API Key</label>
+                    <input id="api-key-input" type="password" placeholder="AIzaSy..." class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm focus:outline-blue-500 font-mono text-gray-700">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Dirección de Salida (Bodega)</label>
+                    <input id="bodega-input" type="text" placeholder="Ej. Blvd. Solidaridad 100, Hermosillo" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm focus:outline-blue-500 text-gray-700">
+                </div>
+            </div>
+            <button onclick="guardarConfig()" class="w-full bg-gray-900 hover:bg-black text-white font-bold p-3 rounded-xl shadow-lg transition-all active:scale-95 text-sm">
+                Guardar Configuración
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal de Historial -->
+    <div id="historial-modal" class="hidden fixed inset-0 bg-black/50 z-20 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-gray-100 flex flex-col gap-4 max-h-[80vh]">
+            <div class="flex justify-between items-center">
+                <h3 class="text-lg font-black text-gray-900"><i class="fa-solid fa-clock-rotate-left text-blue-600 mr-2"></i>Historial de Rutas</h3>
+                <button onclick="cerrarHistorial()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div id="historial-lista" class="flex-1 overflow-y-auto space-y-2 no-scrollbar"></div>
+        </div>
+    </div>
+
+    <script>
+        let map, autocomplete;
+        let overviewMarkers = [];
+        let overviewPolyline = null;
+        let paradas = JSON.parse(localStorage.getItem('paradas_hmo')) || [];
+        let currentPlaceData = null;
+        let panelExpandido = false;
+
+        // --- Estado GPS / Navegación activa ---
+        let watchId = null;
+        let gpsMarker = null;
+        let userPosition = null;
+        let navActiva = false;
+        let paradaActualNavId = null;
+        let navPolyline = null;
+
+        function initApp() {
+            const key = localStorage.getItem('maps_api_key_hmo');
+            document.getElementById('api-key-input').value = key || '';
+            document.getElementById('bodega-input').value = localStorage.getItem('bodega_hmo') || '';
+
+            if (!key) {
+                toggleConfig();
+                return;
+            }
+
+            const script = document.createElement('script');
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places&callback=initMap`;
+            script.async = true;
+            script.defer = true;
+            document.head.appendChild(script);
+        }
+
+        function initMap() {
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 29.0729, lng: -110.9559 },
+                zoom: 13,
+                disableDefaultUI: true,
+                styles: [{ featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] }]
+            });
+
+            const input = document.getElementById('search-input');
+            autocomplete = new google.maps.places.Autocomplete(input, {
+                componentRestrictions: { country: 'mx' },
+                fields: ['geometry', 'formatted_address']
+            });
+
+            autocomplete.addListener('place_changed', () => {
+                const place = autocomplete.getPlace();
+                if (!place.geometry || !place.geometry.location) {
+                    alert("Selecciona una dirección de la lista de sugerencias.");
+                    return;
+                }
+
+                currentPlaceData = {
+                    direccion: place.formatted_address,
+                    lat: place.geometry.location.lat(),
+                    lng: place.geometry.location.lng()
+                };
+
+                document.getElementById('pkg-number').focus();
+            });
+
+            renderListaVisual();
+        }
+
+        function agregarParadaManual() {
+            const pkgNum = document.getElementById('pkg-number').value;
+            if (!currentPlaceData) {
+                alert("Por favor busca una dirección y selecciónala de la lista primero.");
+                return;
+            }
+            if (!pkgNum) {
+                alert("Debes escribir el número de paquete asignado.");
+                return;
+            }
+
+            const nuevaParada = {
+                id: Date.now(),
+                direccion: currentPlaceData.direccion,
+                lat: currentPlaceData.lat,
+                lng: currentPlaceData.lng,
+                paquete: pkgNum,
+                estado: null
+            };
+
+            paradas.push(nuevaParada);
+            guardarYActualizar();
+
+            document.getElementById('search-input').value = '';
+            document.getElementById('pkg-number').value = '';
+            currentPlaceData = null;
+            document.getElementById('search-input').focus();
+        }
+
+        function renderListaVisual() {
+            const listaContainer = document.getElementById('paradas-lista');
+            const emptyState = document.getElementById('empty-state');
+            document.getElementById('counter-text').innerText = `${paradas.length} paradas en lista`;
+
+            if (paradas.length === 0) {
+                listaContainer.innerHTML = '';
+                if (emptyState) listaContainer.appendChild(emptyState);
+                return;
+            }
+
+            listaContainer.innerHTML = '';
+
+            paradas.forEach((parada, index) => {
+                const item = document.createElement('div');
+                item.className = "bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between gap-3";
+
+                let estadoBadge = '';
+                let circuloColor = 'bg-blue-600';
+                if (parada.estado === 'ENTREGADO') {
+                    circuloColor = 'bg-emerald-500';
+                    estadoBadge = `<span class="inline-block mt-1 ml-1 text-[10px] font-extrabold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-md"><i class="fa-solid fa-check mr-1"></i>Entregado</span>`;
+                } else if (parada.estado === 'FALLIDO') {
+                    circuloColor = 'bg-red-500';
+                    estadoBadge = `<span class="inline-block mt-1 ml-1 text-[10px] font-extrabold bg-red-100 text-red-700 px-2 py-0.5 rounded-md"><i class="fa-solid fa-xmark mr-1"></i>Fallido</span>`;
+                }
+
+                item.innerHTML = `
+                    <div class="flex items-center gap-3 flex-1 min-w-0">
+                        <div class="w-7 h-7 ${circuloColor} text-white rounded-full flex items-center justify-center text-xs font-black shrink-0">
+                            ${index + 1}
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <p class="text-xs font-bold text-gray-800 truncate">${parada.direccion}</p>
+                            <span class="inline-block mt-1 text-[10px] font-extrabold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-md border border-gray-200">
+                                <i class="fa-solid fa-box mr-1 text-blue-500"></i>Paquete original: ${parada.paquete}
+                            </span>
+                            ${estadoBadge}
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <button onclick="iniciarNavegacionParada(${parada.id})" class="bg-blue-50 hover:bg-blue-100 text-blue-600 p-2.5 rounded-xl text-xs font-bold active:scale-95 transition-all flex items-center gap-1">
+                            <i class="fa-solid fa-car"></i> Conducir
+                        </button>
+                        <button onclick="eliminarParada(${parada.id})" class="text-gray-300 hover:text-red-500 p-2"><i class="fa-solid fa-trash-can text-sm"></i></button>
+                    </div>
+                `;
+                listaContainer.appendChild(item);
+            });
+        }
+
+        function optimizarRutaCompleta() {
+            if (paradas.length < 2) {
+                alert("Añade al menos 2 paradas para realizar la optimización de reparto.");
+                return;
+            }
+
+            const bodegaStr = localStorage.getItem('bodega_hmo') || "Hermosillo, Sonora";
+            const geocoder = new google.maps.Geocoder();
+
+            geocoder.geocode({ address: bodegaStr }, (results, status) => {
+                if (status !== 'OK' || !results || !results[0]) {
+                    alert("Error: No se pudo verificar la dirección de la bodega.");
+                    return;
+                }
+
+                const inicioCoordenada = {
+                    lat: results[0].geometry.location.lat(),
+                    lng: results[0].geometry.location.lng()
+                };
+
+                let restantes = [...paradas];
+                let ordenadas = [];
+                let posicionActual = inicioCoordenada;
+
+                while (restantes.length > 0) {
+                    let cercanoIdx = 0;
+                    let distanciaMin = Infinity;
+
+                    for (let i = 0; i < restantes.length; i++) {
+                        const dist = calcularHaversine(posicionActual.lat, posicionActual.lng, restantes[i].lat, restantes[i].lng);
+                        if (dist < distanciaMin) {
+                            distanciaMin = dist;
+                            cercanoIdx = i;
+                        }
+                    }
+
+                    posicionActual = restantes[cercanoIdx];
+                    ordenadas.push(restantes[cercanoIdx]);
+                    restantes.splice(cercanoIdx, 1);
+                }
+
+                paradas = ordenadas;
+                guardarYActualizar();
+
+                renderCaminoMapa(inicioCoordenada, paradas);
+            });
+        }
+
+        function calcularHaversine(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+        }
+
+        // Vista previa GRATUITA del recorrido optimizado (sin límite de paradas, sin costo de Directions API)
+        function renderCaminoMapa(origen, lista) {
+            limpiarOverview();
+
+            const bounds = new google.maps.LatLngBounds();
+            const path = [origen];
+            bounds.extend(origen);
+
+            overviewMarkers.push(new google.maps.Marker({
+                position: origen, map: map, label: 'B', title: 'Bodega / Origen'
+            }));
+
+            lista.forEach((parada, i) => {
+                const pos = { lat: parada.lat, lng: parada.lng };
+                overviewMarkers.push(new google.maps.Marker({ position: pos, map: map, label: String(i + 1) }));
+                path.push(pos);
+                bounds.extend(pos);
+            });
+
+            overviewPolyline = new google.maps.Polyline({
+                path: path, map: map, strokeColor: '#2563EB', strokeWeight: 5, strokeOpacity: 0.85
+            });
+
+            map.fitBounds(bounds);
+        }
+
+        function limpiarOverview() {
+            overviewMarkers.forEach(m => m.setMap(null));
+            overviewMarkers = [];
+            if (overviewPolyline) {
+                overviewPolyline.setMap(null);
+                overviewPolyline = null;
+            }
+        }
+
+        function eliminarParada(id) {
+            paradas = paradas.filter(p => p.id !== id);
+            guardarYActualizar();
+            if (paradas.length === 0) limpiarOverview();
+        }
+
+        function vaciarTodo() {
+            if (confirm("¿Quieres borrar toda la lista de paradas?")) {
+                paradas = [];
+                guardarYActualizar();
+                limpiarOverview();
+            }
+        }
+
+        function guardarYActualizar() {
+            localStorage.setItem('paradas_hmo', JSON.stringify(paradas));
+            renderListaVisual();
+        }
+
+        function toggleConfig() {
+            document.getElementById('config-modal').classList.toggle('hidden');
+        }
+
+        function guardarConfig() {
+            const key = document.getElementById('api-key-input').value.trim();
+            const bodega = document.getElementById('bodega-input').value.trim();
+
+            if (!key || !bodega) {
+                alert("Completa ambos campos para activar la aplicación.");
+                return;
+            }
+
+            localStorage.setItem('maps_api_key_hmo', key);
+            localStorage.setItem('bodega_hmo', bodega);
+            toggleConfig();
+            location.reload();
+        }
+
+        function togglePanelDimension() {
+            const panel = document.getElementById('route-panel');
+            if (panelExpandido) {
+                panel.style.height = "40vh";
+            } else {
+                panel.style.height = "85vh";
+            }
+            panelExpandido = !panelExpandido;
+        }
+
+        // =========================================================
+        // 1) GPS EN VIVO (rastreo continuo)
+        // =========================================================
+        function activarGPS() {
+            if (!navigator.geolocation) {
+                alert("Tu dispositivo/navegador no soporta geolocalización.");
+                return;
+            }
+            if (watchId === null) {
+                watchId = navigator.geolocation.watchPosition(onPosicionActualizada, onErrorGPS, {
+                    enableHighAccuracy: true,
+                    maximumAge: 5000,
+                    timeout: 15000
+                });
+            }
+            // Recentrar de inmediato si ya tenemos una posición conocida
+            if (userPosition && map) {
+                map.setCenter(userPosition);
+                map.setZoom(15);
+            }
+        }
+
+        function onPosicionActualizada(pos) {
+            userPosition = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+
+            if (!gpsMarker) {
+                gpsMarker = new google.maps.Marker({
+                    position: userPosition,
+                    map: map,
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 9,
+                        fillColor: '#10B981',
+                        fillOpacity: 1,
+                        strokeColor: '#ffffff',
+                        strokeWeight: 3
+                    },
+                    zIndex: 999
+                });
+                map.setCenter(userPosition);
+                map.setZoom(15);
+            } else {
+                gpsMarker.setPosition(userPosition);
+            }
+
+            if (navActiva) {
+                actualizarLineaNavegacion();
+            }
+        }
+
+        function onErrorGPS(err) {
+            alert("No se pudo obtener tu ubicación: " + err.message);
+        }
+
+        // =========================================================
+        // 2) MODO NAVEGACIÓN ACTIVA
+        // =========================================================
+        function iniciarNavegacionParada(id) {
+            const parada = paradas.find(p => p.id === id);
+            if (!parada) return;
+
+            navActiva = true;
+            paradaActualNavId = id;
+
+            document.getElementById('search-panel').classList.add('hidden');
+            document.getElementById('route-panel').classList.add('hidden');
+            document.getElementById('gear-btn').classList.add('hidden');
+            document.getElementById('floating-actions').classList.add('hidden');
+            document.getElementById('nav-bar').classList.remove('hidden');
+
+            document.getElementById('nav-pkg-badge').innerText = parada.paquete;
+            document.getElementById('nav-address').innerText = parada.direccion;
+
+            activarGPS();
+
+            if (map) {
+                map.panTo({ lat: parada.lat, lng: parada.lng });
+                map.setZoom(16);
+            }
+
+            actualizarLineaNavegacion();
+        }
+
+        function actualizarLineaNavegacion() {
+            if (!navActiva || !userPosition || !paradaActualNavId) return;
+            const parada = paradas.find(p => p.id === paradaActualNavId);
+            if (!parada) return;
+
+            const path = [userPosition, { lat: parada.lat, lng: parada.lng }];
+            if (navPolyline) {
+                navPolyline.setPath(path);
+            } else {
+                navPolyline = new google.maps.Polyline({
+                    path: path,
+                    map: map,
+                    strokeColor: '#2563EB',
+                    strokeWeight: 5,
+                    strokeOpacity: 0.9
+                });
+            }
+        }
+
+        function cerrarNavegacion() {
+            navActiva = false;
+            paradaActualNavId = null;
+
+            if (navPolyline) {
+                navPolyline.setMap(null);
+                navPolyline = null;
+            }
+
+            document.getElementById('nav-bar').classList.add('hidden');
+            document.getElementById('search-panel').classList.remove('hidden');
+            document.getElementById('route-panel').classList.remove('hidden');
+            document.getElementById('gear-btn').classList.remove('hidden');
+            document.getElementById('floating-actions').classList.remove('hidden');
+        }
+
+        function marcarEntrega(estadoNuevo) {
+            const parada = paradas.find(p => p.id === paradaActualNavId);
+            if (!parada) return;
+
+            parada.estado = estadoNuevo;
+            guardarYActualizar();
+            guardarHistorialHoy();
+
+            const siguiente = paradas.find(p => !p.estado);
+            if (siguiente) {
+                iniciarNavegacionParada(siguiente.id);
+            } else {
+                alert("🎉 ¡Ruta completada! Ya no hay más paradas pendientes.");
+                cerrarNavegacion();
+            }
+        }
+
+        // =========================================================
+        // 3) HISTORIAL DE RUTAS POR FECHA
+        // =========================================================
+        function getFechaHoyTexto() {
+            const hoy = new Date();
+            return hoy.toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' });
+        }
+
+        function guardarHistorialHoy() {
+            const historial = JSON.parse(localStorage.getItem('historial_hmo')) || {};
+            const fechaHoy = getFechaHoyTexto();
+            historial[fechaHoy] = {
+                paradas: JSON.parse(JSON.stringify(paradas)),
+                timestamp: Date.now()
+            };
+            localStorage.setItem('historial_hmo', JSON.stringify(historial));
+        }
+
+        function abrirHistorial() {
+            const historial = JSON.parse(localStorage.getItem('historial_hmo')) || {};
+            const fechas = Object.keys(historial).sort((a, b) => historial[b].timestamp - historial[a].timestamp);
+
+            const lista = document.getElementById('historial-lista');
+            lista.innerHTML = '';
+
+            if (fechas.length === 0) {
+                lista.innerHTML = `<p class="text-xs text-gray-400 text-center py-6">Aún no hay rutas guardadas en el historial.</p>`;
+            } else {
+                fechas.forEach(fecha => {
+                    const entrada = historial[fecha];
+                    const total = entrada.paradas.length;
+                    const exitosas = entrada.paradas.filter(p => p.estado === 'ENTREGADO').length;
+
+                    const item = document.createElement('div');
+                    item.className = "bg-gray-50 border border-gray-200 rounded-2xl p-3 flex items-center justify-between gap-3";
+                    item.innerHTML = `
+                        <div>
+                            <p class="text-sm font-bold text-gray-800 capitalize">${fecha}</p>
+                            <p class="text-xs text-gray-500">${total} paquetes cargados · <span class="text-emerald-600 font-bold">${exitosas} exitosos</span></p>
+                        </div>
+                        <button onclick="verRutaHistorial('${fecha}')" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-3 py-2 rounded-xl active:scale-95 transition-all">Ver</button>
+                    `;
+                    lista.appendChild(item);
+                });
+            }
+
+            document.getElementById('historial-modal').classList.remove('hidden');
+        }
+
+        function cerrarHistorial() {
+            document.getElementById('historial-modal').classList.add('hidden');
+        }
+
+        function verRutaHistorial(fecha) {
+            if (!confirm(`¿Cargar la ruta del ${fecha} en pantalla para auditar? Tu lista actual sigue guardada en el historial de hoy.`)) return;
+
+            const historial = JSON.parse(localStorage.getItem('historial_hmo')) || {};
+            const entrada = historial[fecha];
+            if (!entrada) return;
+
+            paradas = JSON.parse(JSON.stringify(entrada.paradas));
+            guardarYActualizar();
+            cerrarHistorial();
+        }
+
+        window.onload = initApp;
+    </script>
+</body>
+</html>
