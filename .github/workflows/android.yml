@@ -26,6 +26,9 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Crear carpeta www por seguridad
+        run: mkdir -p www
+
       - name: Generar entorno nativo Android desde cero
         run: |
           if [ ! -d "android" ]; then
@@ -33,9 +36,6 @@ jobs:
           else
             echo "La carpeta android/ ya existe, se omite 'cap add android'."
           fi
-
-         # Forzar la creación de la carpeta www si no existiera en el build context
-         mkdir -p www
 
       - name: Sincronizar Capacitor con Android
         run: npx cap sync android
