@@ -20,11 +20,11 @@ jobs:
       - name: Instalar dependencias de npm
         run: npm install
 
-      - name: Configurar Java (JDK 17)
+      - name: Configurar Java (JDK 21)
         uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Crear carpeta www por seguridad
         run: mkdir -p www
