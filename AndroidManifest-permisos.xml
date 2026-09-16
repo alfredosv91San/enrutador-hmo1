@@ -1,9 +1,0 @@
-<!--
-  Agrega estas líneas dentro de android/app/src/main/AndroidManifest.xml,
-  ANTES de la etiqueta <application ...>.
-  Ya deberías tener <uses-permission android:name="android.permission.INTERNET" />
-  de la app de EscanerGuías; si ya está, no la dupliques.
--->
-<uses-permission android:name="android.permission.INTERNET" />
-<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
