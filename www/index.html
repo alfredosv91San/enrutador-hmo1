@@ -6,10 +6,13 @@
     <title>Enrutador HMO Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
     <style>
         html, body, #map { height: 100%; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .leaflet-control-attribution { font-size: 9px !important; }
     </style>
 </head>
 <body class="bg-gray-100 overflow-hidden select-none">
@@ -21,9 +24,12 @@
     </button>
 
     <div id="search-panel" class="absolute top-4 right-4 left-16 z-10 max-w-md md:mx-auto bg-white/95 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-gray-100 flex flex-col gap-3">
-        <div class="flex items-center gap-2 bg-gray-100 p-3 rounded-xl border border-gray-200">
-            <i class="fa-solid fa-magnifying-glass text-gray-400"></i>
-            <input id="search-input" type="text" placeholder="Buscar dirección (o usa voz del teclado)..." class="bg-transparent w-full focus:outline-none text-sm font-medium text-gray-800">
+        <div class="relative">
+            <div class="flex items-center gap-2 bg-gray-100 p-3 rounded-xl border border-gray-200">
+                <i class="fa-solid fa-magnifying-glass text-gray-400"></i>
+                <input id="search-input" type="text" autocomplete="off" placeholder="Buscar dirección en Hermosillo (o usa voz del teclado)..." class="bg-transparent w-full focus:outline-none text-sm font-medium text-gray-800">
+            </div>
+            <div id="suggestions-box" class="hidden absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 max-h-56 overflow-y-auto no-scrollbar z-40"></div>
         </div>
 
         <div class="flex items-center gap-2">
@@ -98,20 +104,17 @@
     </div>
 
     <div id="config-modal" class="hidden fixed inset-0 bg-black/50 z-20 backdrop-blur-sm flex items-center justify-center p-4">
-        <div class="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-gray-100 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200">
+        <div class="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-gray-100 flex flex-col gap-4">
             <div class="flex justify-between items-center">
                 <h3 class="text-lg font-black text-gray-900"><i class="fa-solid fa-sliders text-blue-600 mr-2"></i>Configuración</h3>
                 <button onclick="toggleConfig()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-lg"></i></button>
             </div>
             <div class="space-y-3">
                 <div>
-                    <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Google Maps API Key</label>
-                    <input id="api-key-input" type="password" placeholder="AIzaSy..." class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm focus:outline-blue-500 font-mono text-gray-700">
-                </div>
-                <div>
                     <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Dirección de Salida (Bodega)</label>
                     <input id="bodega-input" type="text" placeholder="Ej. Blvd. Solidaridad 100, Hermosillo" class="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm focus:outline-blue-500 text-gray-700">
                 </div>
+                <p class="text-[11px] text-gray-400 leading-snug">Mapa: OpenStreetMap · Buscador: Photon — ambos gratuitos, sin API key ni facturación.</p>
             </div>
             <button onclick="guardarConfig()" class="w-full bg-gray-900 hover:bg-black text-white font-bold p-3 rounded-xl shadow-lg transition-all active:scale-95 text-sm">
                 Guardar Configuración
@@ -131,12 +134,18 @@
     </div>
 
     <script>
-        let map, autocomplete;
-        let overviewMarkers = [];
-        let overviewPolyline = null;
+        // ---------------------------------------------------------------
+        // Stack 100% gratuito: Leaflet + OpenStreetMap (mapa) y Photon (buscador),
+        // sin API key ni facturación de Google. Acotado a Hermosillo con un bbox
+        // para mejorar precisión de calles/cerradas.
+        // ---------------------------------------------------------------
+        const HMO_BBOX = "-111.25,28.85,-110.75,29.30"; // minLon,minLat,maxLon,maxLat
+
+        let map;
         let paradas = JSON.parse(localStorage.getItem('paradas_hmo')) || [];
         let currentPlaceData = null;
         let panelExpandido = false;
+        let searchDebounceTimer = null;
 
         // --- Estado GPS / Navegación activa ---
         let watchId = null;
@@ -146,60 +155,107 @@
         let paradaActualNavId = null;
         let navPolyline = null;
 
+        // --- Overview del recorrido optimizado ---
+        let overviewMarkers = [];
+        let overviewPolyline = null;
+
         function initApp() {
-            const key = localStorage.getItem('maps_api_key_hmo');
-            document.getElementById('api-key-input').value = key || '';
             document.getElementById('bodega-input').value = localStorage.getItem('bodega_hmo') || '';
-
-            if (!key) {
+            if (!localStorage.getItem('bodega_hmo')) {
                 toggleConfig();
-                return;
             }
-
-            const script = document.createElement('script');
-            script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places&callback=initMap`;
-            script.async = true;
-            script.defer = true;
-            document.head.appendChild(script);
-        }
-
-        function initMap() {
-            map = new google.maps.Map(document.getElementById('map'), {
-                center: { lat: 29.0729, lng: -110.9559 },
-                zoom: 13,
-                disableDefaultUI: true,
-                styles: [{ featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] }]
-            });
-
-            const input = document.getElementById('search-input');
-            autocomplete = new google.maps.places.Autocomplete(input, {
-                componentRestrictions: { country: 'mx' },
-                fields: ['geometry', 'formatted_address']
-            });
-
-            autocomplete.addListener('place_changed', () => {
-                const place = autocomplete.getPlace();
-                if (!place.geometry || !place.geometry.location) {
-                    alert("Selecciona una dirección de la lista de sugerencias.");
-                    return;
-                }
-
-                currentPlaceData = {
-                    direccion: place.formatted_address,
-                    lat: place.geometry.location.lat(),
-                    lng: place.geometry.location.lng()
-                };
-
-                document.getElementById('pkg-number').focus();
-            });
-
+            initMap();
             renderListaVisual();
         }
 
+        function initMap() {
+            map = L.map('map', { zoomControl: false }).setView([29.0729, -110.9559], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(map);
+        }
+
+        // =========================================================
+        // BUSCADOR DE DIRECCIONES (Photon, gratis, sin key)
+        // =========================================================
+        document.addEventListener('DOMContentLoaded', () => {
+            const input = document.getElementById('search-input');
+            input.addEventListener('input', (e) => {
+                currentPlaceData = null;
+                clearTimeout(searchDebounceTimer);
+                const valor = e.target.value.trim();
+                if (valor.length < 3) { ocultarSugerencias(); return; }
+                searchDebounceTimer = setTimeout(() => buscarDirecciones(valor), 350);
+            });
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('#search-panel')) ocultarSugerencias();
+            });
+        });
+
+        function buscarDirecciones(query) {
+            const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&lang=es&limit=6&bbox=${HMO_BBOX}`;
+            fetch(url)
+                .then(r => r.json())
+                .then(data => mostrarSugerencias(data.features || []))
+                .catch(() => ocultarSugerencias());
+        }
+
+        function formatearDireccion(props) {
+            const l1 = [props.name, props.housenumber, (props.street && props.street !== props.name) ? props.street : null].filter(Boolean).join(' ');
+            const l2 = [props.district, props.city, props.state].filter(Boolean).join(', ');
+            return l2 ? `${l1} — ${l2}` : (l1 || 'Ubicación sin nombre');
+        }
+
+        function mostrarSugerencias(features) {
+            const cont = document.getElementById('suggestions-box');
+            if (!features.length) {
+                cont.innerHTML = `<div class="p-3 text-xs text-gray-400">Sin resultados en Hermosillo para eso. Prueba con otro nombre de calle.</div>`;
+                cont.classList.remove('hidden');
+                return;
+            }
+            cont.innerHTML = '';
+            features.forEach(f => {
+                const [lon, lat] = f.geometry.coordinates;
+                const texto = formatearDireccion(f.properties);
+                const item = document.createElement('div');
+                item.className = "p-3 text-sm border-b border-gray-100 last:border-0 hover:bg-blue-50 cursor-pointer";
+                item.innerHTML = `<i class="fa-solid fa-location-dot text-blue-500 mr-2"></i>${texto}`;
+                item.onclick = () => seleccionarSugerencia(texto, lat, lon);
+                cont.appendChild(item);
+            });
+            cont.classList.remove('hidden');
+        }
+
+        function seleccionarSugerencia(texto, lat, lon) {
+            document.getElementById('search-input').value = texto;
+            currentPlaceData = { direccion: texto, lat: lat, lng: lon };
+            ocultarSugerencias();
+            document.getElementById('pkg-number').focus();
+        }
+
+        function ocultarSugerencias() {
+            const cont = document.getElementById('suggestions-box');
+            cont.classList.add('hidden');
+            cont.innerHTML = '';
+        }
+
+        function geocodificarDireccion(direccion) {
+            const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(direccion)}&lang=es&limit=1&bbox=${HMO_BBOX}`;
+            return fetch(url).then(r => r.json()).then(data => {
+                if (!data.features || !data.features.length) return null;
+                const [lon, lat] = data.features[0].geometry.coordinates;
+                return { lat: lat, lng: lon };
+            });
+        }
+
+        // =========================================================
+        // AGREGAR / LISTAR PARADAS (paquete SIEMPRE amarrado a su fila)
+        // =========================================================
         function agregarParadaManual() {
             const pkgNum = document.getElementById('pkg-number').value;
             if (!currentPlaceData) {
-                alert("Por favor busca una dirección y selecciónala de la lista primero.");
+                alert("Por favor busca una dirección y selecciónala de la lista de sugerencias primero.");
                 return;
             }
             if (!pkgNum) {
@@ -276,6 +332,17 @@
             });
         }
 
+        // =========================================================
+        // OPTIMIZACIÓN LOCAL: Vecino más cercano + Haversine (sin límite, sin costo)
+        // =========================================================
+        function calcularHaversine(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+        }
+
         function optimizarRutaCompleta() {
             if (paradas.length < 2) {
                 alert("Añade al menos 2 paradas para realizar la optimización de reparto.");
@@ -283,18 +350,12 @@
             }
 
             const bodegaStr = localStorage.getItem('bodega_hmo') || "Hermosillo, Sonora";
-            const geocoder = new google.maps.Geocoder();
 
-            geocoder.geocode({ address: bodegaStr }, (results, status) => {
-                if (status !== 'OK' || !results || !results[0]) {
-                    alert("Error: No se pudo verificar la dirección de la bodega.");
+            geocodificarDireccion(bodegaStr).then(inicioCoordenada => {
+                if (!inicioCoordenada) {
+                    alert("No se pudo ubicar la dirección de la bodega. Revísala en Config.");
                     return;
                 }
-
-                const inicioCoordenada = {
-                    lat: results[0].geometry.location.lat(),
-                    lng: results[0].geometry.location.lng()
-                };
 
                 let restantes = [...paradas];
                 let ordenadas = [];
@@ -319,50 +380,46 @@
 
                 paradas = ordenadas;
                 guardarYActualizar();
-
                 renderCaminoMapa(inicioCoordenada, paradas);
+            }).catch(() => alert("Error de red al ubicar la bodega. Intenta de nuevo."));
+        }
+
+        function crearIconoNumerado(numero, colorFondo) {
+            return L.divIcon({
+                className: '',
+                html: `<div style="background:${colorFondo};color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.4);">${numero}</div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 14]
             });
         }
 
-        function calcularHaversine(lat1, lon1, lat2, lon2) {
-            const R = 6371;
-            const dLat = (lat2 - lat1) * Math.PI / 180;
-            const dLon = (lon2 - lon1) * Math.PI / 180;
-            const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
-            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
-        }
-
-        // Vista previa GRATUITA del recorrido optimizado (sin límite de paradas, sin costo de Directions API)
         function renderCaminoMapa(origen, lista) {
             limpiarOverview();
 
-            const bounds = new google.maps.LatLngBounds();
-            const path = [origen];
-            bounds.extend(origen);
+            const puntos = [[origen.lat, origen.lng]];
 
-            overviewMarkers.push(new google.maps.Marker({
-                position: origen, map: map, label: 'B', title: 'Bodega / Origen'
-            }));
+            overviewMarkers.push(
+                L.marker([origen.lat, origen.lng], { icon: crearIconoNumerado('B', '#111827') })
+                    .addTo(map).bindPopup('Bodega / Origen')
+            );
 
             lista.forEach((parada, i) => {
-                const pos = { lat: parada.lat, lng: parada.lng };
-                overviewMarkers.push(new google.maps.Marker({ position: pos, map: map, label: String(i + 1) }));
-                path.push(pos);
-                bounds.extend(pos);
+                overviewMarkers.push(
+                    L.marker([parada.lat, parada.lng], { icon: crearIconoNumerado(i + 1, '#2563EB') })
+                        .addTo(map).bindPopup(`Paquete #${parada.paquete}<br>${parada.direccion}`)
+                );
+                puntos.push([parada.lat, parada.lng]);
             });
 
-            overviewPolyline = new google.maps.Polyline({
-                path: path, map: map, strokeColor: '#2563EB', strokeWeight: 5, strokeOpacity: 0.85
-            });
-
-            map.fitBounds(bounds);
+            overviewPolyline = L.polyline(puntos, { color: '#2563EB', weight: 5, opacity: 0.85 }).addTo(map);
+            map.fitBounds(L.latLngBounds(puntos), { padding: [40, 40] });
         }
 
         function limpiarOverview() {
-            overviewMarkers.forEach(m => m.setMap(null));
+            overviewMarkers.forEach(m => map.removeLayer(m));
             overviewMarkers = [];
             if (overviewPolyline) {
-                overviewPolyline.setMap(null);
+                map.removeLayer(overviewPolyline);
                 overviewPolyline = null;
             }
         }
@@ -391,18 +448,13 @@
         }
 
         function guardarConfig() {
-            const key = document.getElementById('api-key-input').value.trim();
             const bodega = document.getElementById('bodega-input').value.trim();
-
-            if (!key || !bodega) {
-                alert("Completa ambos campos para activar la aplicación.");
+            if (!bodega) {
+                alert("Ingresa la dirección de tu bodega/punto de partida.");
                 return;
             }
-
-            localStorage.setItem('maps_api_key_hmo', key);
             localStorage.setItem('bodega_hmo', bodega);
             toggleConfig();
-            location.reload();
         }
 
         function togglePanelDimension() {
@@ -418,6 +470,15 @@
         // =========================================================
         // 1) GPS EN VIVO (rastreo continuo)
         // =========================================================
+        function crearIconoGPS() {
+            return L.divIcon({
+                className: '',
+                html: `<div style="background:#10B981;width:20px;height:20px;border-radius:50%;border:3px solid white;box-shadow:0 0 0 4px rgba(16,185,129,0.3);"></div>`,
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+        }
+
         function activarGPS() {
             if (!navigator.geolocation) {
                 alert("Tu dispositivo/navegador no soporta geolocalización.");
@@ -430,10 +491,8 @@
                     timeout: 15000
                 });
             }
-            // Recentrar de inmediato si ya tenemos una posición conocida
             if (userPosition && map) {
-                map.setCenter(userPosition);
-                map.setZoom(15);
+                map.setView([userPosition.lat, userPosition.lng], 15);
             }
         }
 
@@ -441,23 +500,10 @@
             userPosition = { lat: pos.coords.latitude, lng: pos.coords.longitude };
 
             if (!gpsMarker) {
-                gpsMarker = new google.maps.Marker({
-                    position: userPosition,
-                    map: map,
-                    icon: {
-                        path: google.maps.SymbolPath.CIRCLE,
-                        scale: 9,
-                        fillColor: '#10B981',
-                        fillOpacity: 1,
-                        strokeColor: '#ffffff',
-                        strokeWeight: 3
-                    },
-                    zIndex: 999
-                });
-                map.setCenter(userPosition);
-                map.setZoom(15);
+                gpsMarker = L.marker([userPosition.lat, userPosition.lng], { icon: crearIconoGPS(), zIndexOffset: 999 }).addTo(map);
+                map.setView([userPosition.lat, userPosition.lng], 15);
             } else {
-                gpsMarker.setPosition(userPosition);
+                gpsMarker.setLatLng([userPosition.lat, userPosition.lng]);
             }
 
             if (navActiva) {
@@ -491,8 +537,7 @@
             activarGPS();
 
             if (map) {
-                map.panTo({ lat: parada.lat, lng: parada.lng });
-                map.setZoom(16);
+                map.setView([parada.lat, parada.lng], 16);
             }
 
             actualizarLineaNavegacion();
@@ -503,17 +548,11 @@
             const parada = paradas.find(p => p.id === paradaActualNavId);
             if (!parada) return;
 
-            const path = [userPosition, { lat: parada.lat, lng: parada.lng }];
+            const path = [[userPosition.lat, userPosition.lng], [parada.lat, parada.lng]];
             if (navPolyline) {
-                navPolyline.setPath(path);
+                navPolyline.setLatLngs(path);
             } else {
-                navPolyline = new google.maps.Polyline({
-                    path: path,
-                    map: map,
-                    strokeColor: '#2563EB',
-                    strokeWeight: 5,
-                    strokeOpacity: 0.9
-                });
+                navPolyline = L.polyline(path, { color: '#2563EB', weight: 5, opacity: 0.9 }).addTo(map);
             }
         }
 
@@ -522,7 +561,7 @@
             paradaActualNavId = null;
 
             if (navPolyline) {
-                navPolyline.setMap(null);
+                map.removeLayer(navPolyline);
                 navPolyline = null;
             }
 
