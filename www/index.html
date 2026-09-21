@@ -48,10 +48,14 @@
         <button onclick="activarGPS()" id="gps-btn" class="bg-white/90 backdrop-blur-md p-3 rounded-full shadow-lg border border-gray-200 text-blue-600 active:scale-95 transition-all">
             <i class="fa-solid fa-location-crosshairs text-lg"></i>
         </button>
+        <button onclick="document.getElementById('kml-file-input').click()" class="bg-white/90 backdrop-blur-md p-3 rounded-full shadow-lg border border-gray-200 text-emerald-600 active:scale-95 transition-all" title="Importar desde Google My Maps (KML)">
+            <i class="fa-solid fa-file-import text-lg"></i>
+        </button>
         <button onclick="abrirHistorial()" class="bg-white/90 backdrop-blur-md p-3 rounded-full shadow-lg border border-gray-200 text-gray-700 active:scale-95 transition-all">
             <i class="fa-solid fa-clock-rotate-left text-lg"></i>
         </button>
     </div>
+    <input type="file" id="kml-file-input" accept=".kml" class="hidden">
 
     <!-- Barra de navegación activa (modo Conducir) -->
     <div id="nav-bar" class="hidden absolute top-0 inset-x-0 z-30 bg-slate-900 text-white p-4 flex flex-col gap-3 shadow-xl">
@@ -159,6 +163,10 @@
         let overviewMarkers = [];
         let overviewPolyline = null;
 
+        // --- Búsqueda: pin manual de respaldo cuando OSM no tiene el número exacto ---
+        let previewMarker = null;
+        let modoPinManual = false;
+
         function initApp() {
             document.getElementById('bodega-input').value = localStorage.getItem('bodega_hmo') || '';
             if (!localStorage.getItem('bodega_hmo')) {
@@ -174,6 +182,29 @@
                 maxZoom: 19,
                 attribution: '&copy; OpenStreetMap contributors'
             }).addTo(map);
+
+            map.on('click', function(e) {
+                if (!modoPinManual) return;
+                modoPinManual = false;
+                document.getElementById('search-input').placeholder = 'Buscar dirección en Hermosillo (o usa voz del teclado)...';
+
+                const direccionTexto = document.getElementById('search-input').value.trim() || `Punto marcado manualmente (${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)})`;
+                currentPlaceData = { direccion: direccionTexto, lat: e.latlng.lat, lng: e.latlng.lng };
+                mostrarMarcadorPreview(e.latlng.lat, e.latlng.lng);
+                document.getElementById('pkg-number').focus();
+            });
+        }
+
+        function mostrarMarcadorPreview(lat, lng) {
+            if (previewMarker) map.removeLayer(previewMarker);
+            previewMarker = L.marker([lat, lng], { icon: crearIconoNumerado('•', '#f59e0b') }).addTo(map);
+            map.setView([lat, lng], 16);
+        }
+
+        function activarPinManual() {
+            ocultarSugerencias();
+            modoPinManual = true;
+            document.getElementById('search-input').placeholder = 'Toca el punto exacto en el mapa...';
         }
 
         // =========================================================
@@ -197,8 +228,27 @@
             const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&lang=es&limit=6&bbox=${HMO_BBOX}`;
             fetch(url)
                 .then(r => r.json())
-                .then(data => mostrarSugerencias(data.features || []))
-                .catch(() => ocultarSugerencias());
+                .then(data => {
+                    const features = data.features || [];
+                    if (features.length > 0) {
+                        mostrarSugerencias(features, false);
+                        return;
+                    }
+                    // Reintento automático: muchas calles de Hermosillo no tienen
+                    // el número de casa cargado en OpenStreetMap. Si falla la
+                    // búsqueda completa, probamos solo con el nombre de la calle.
+                    const soloCalle = query.replace(/\s*\d+\s*$/, '').trim();
+                    if (soloCalle && soloCalle !== query) {
+                        const url2 = `https://photon.komoot.io/api/?q=${encodeURIComponent(soloCalle)}&lang=es&limit=6&bbox=${HMO_BBOX}`;
+                        fetch(url2)
+                            .then(r => r.json())
+                            .then(data2 => mostrarSugerencias(data2.features || [], true))
+                            .catch(() => mostrarSugerencias([], false));
+                    } else {
+                        mostrarSugerencias([], false);
+                    }
+                })
+                .catch(() => mostrarSugerencias([], false));
         }
 
         function formatearDireccion(props) {
@@ -207,29 +257,47 @@
             return l2 ? `${l1} — ${l2}` : (l1 || 'Ubicación sin nombre');
         }
 
-        function mostrarSugerencias(features) {
+        function mostrarSugerencias(features, esAproximado) {
             const cont = document.getElementById('suggestions-box');
-            if (!features.length) {
-                cont.innerHTML = `<div class="p-3 text-xs text-gray-400">Sin resultados en Hermosillo para eso. Prueba con otro nombre de calle.</div>`;
-                cont.classList.remove('hidden');
-                return;
-            }
             cont.innerHTML = '';
-            features.forEach(f => {
-                const [lon, lat] = f.geometry.coordinates;
-                const texto = formatearDireccion(f.properties);
-                const item = document.createElement('div');
-                item.className = "p-3 text-sm border-b border-gray-100 last:border-0 hover:bg-blue-50 cursor-pointer";
-                item.innerHTML = `<i class="fa-solid fa-location-dot text-blue-500 mr-2"></i>${texto}`;
-                item.onclick = () => seleccionarSugerencia(texto, lat, lon);
-                cont.appendChild(item);
-            });
+
+            if (esAproximado && features.length) {
+                const aviso = document.createElement('div');
+                aviso.className = "p-2 text-[11px] bg-amber-50 text-amber-700 font-semibold border-b border-amber-100";
+                aviso.innerText = "⚠️ Solo se encontró la calle (sin el número exacto). Verifica el pin en el mapa antes de guardar.";
+                cont.appendChild(aviso);
+            }
+
+            if (!features.length) {
+                const msg = document.createElement('div');
+                msg.className = "p-3 text-xs text-gray-400";
+                msg.innerText = "Sin resultados en Hermosillo para eso.";
+                cont.appendChild(msg);
+            } else {
+                features.forEach(f => {
+                    const [lon, lat] = f.geometry.coordinates;
+                    const texto = formatearDireccion(f.properties);
+                    const item = document.createElement('div');
+                    item.className = "p-3 text-sm border-b border-gray-100 hover:bg-blue-50 cursor-pointer";
+                    item.innerHTML = `<i class="fa-solid fa-location-dot text-blue-500 mr-2"></i>${texto}`;
+                    item.onclick = () => seleccionarSugerencia(texto, lat, lon);
+                    cont.appendChild(item);
+                });
+            }
+
+            const pinItem = document.createElement('div');
+            pinItem.className = "p-3 text-sm border-t-2 border-gray-100 bg-gray-50 hover:bg-blue-50 cursor-pointer font-bold text-blue-700";
+            pinItem.innerHTML = `<i class="fa-solid fa-map-pin mr-2"></i>No está en la lista: marcar manualmente en el mapa`;
+            pinItem.onclick = () => activarPinManual();
+            cont.appendChild(pinItem);
+
             cont.classList.remove('hidden');
         }
 
         function seleccionarSugerencia(texto, lat, lon) {
             document.getElementById('search-input').value = texto;
             currentPlaceData = { direccion: texto, lat: lat, lng: lon };
+            mostrarMarcadorPreview(lat, lon);
             ocultarSugerencias();
             document.getElementById('pkg-number').focus();
         }
@@ -274,6 +342,8 @@
 
             paradas.push(nuevaParada);
             guardarYActualizar();
+
+            if (previewMarker) { map.removeLayer(previewMarker); previewMarker = null; }
 
             document.getElementById('search-input').value = '';
             document.getElementById('pkg-number').value = '';
@@ -652,6 +722,64 @@
             paradas = JSON.parse(JSON.stringify(entrada.paradas));
             guardarYActualizar();
             cerrarHistorial();
+        }
+
+        // =========================================================
+        // 4) IMPORTAR DESDE GOOGLE MY MAPS (KML) — gratis, sin API, con la
+        //    precisión real de Google porque el punto ya lo buscaste tú
+        //    en mymaps.google.com con el buscador normal de Google.
+        // =========================================================
+        document.getElementById('kml-file-input').addEventListener('change', function (e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (evt) => importarKML(evt.target.result);
+            reader.readAsText(file);
+            e.target.value = '';
+        });
+
+        function importarKML(kmlText) {
+            try {
+                const parser = new DOMParser();
+                const xml = parser.parseFromString(kmlText, "text/xml");
+                const placemarks = xml.getElementsByTagName("Placemark");
+
+                if (!placemarks.length) {
+                    alert("No se encontraron puntos en ese archivo KML. Asegúrate de exportar la capa (no un archivo vacío).");
+                    return;
+                }
+
+                let nuevas = 0;
+                for (let i = 0; i < placemarks.length; i++) {
+                    const pm = placemarks[i];
+                    const coordEl = pm.getElementsByTagName("coordinates")[0];
+                    if (!coordEl) continue;
+
+                    const coordText = coordEl.textContent.trim().split(/\s+/)[0];
+                    const partes = coordText.split(',');
+                    const lon = parseFloat(partes[0]);
+                    const lat = parseFloat(partes[1]);
+                    if (isNaN(lat) || isNaN(lon)) continue;
+
+                    const nameEl = pm.getElementsByTagName("name")[0];
+                    const nombre = nameEl ? nameEl.textContent.trim() : `Punto ${i + 1}`;
+
+                    paradas.push({
+                        id: Date.now() + i,
+                        direccion: nombre,
+                        lat: lat,
+                        lng: lon,
+                        paquete: nombre,
+                        estado: null
+                    });
+                    nuevas++;
+                }
+
+                guardarYActualizar();
+                alert(`✅ Se importaron ${nuevas} paradas desde Google My Maps. Ya puedes darle "Optimizar".`);
+            } catch (err) {
+                alert("Error leyendo el archivo KML: " + err.message);
+            }
         }
 
         window.onload = initApp;
