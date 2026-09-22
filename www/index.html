@@ -879,12 +879,19 @@
                     const nameEl = pm.getElementsByTagName("name")[0];
                     const nombre = nameEl ? nameEl.textContent.trim() : `Punto ${i + 1}`;
 
+                    // El número de paquete se toma de la "Descripción" del punto en
+                    // My Maps (el recuadro grande debajo del nombre). Si no pusiste
+                    // nada ahí, usa el nombre del punto como respaldo.
+                    const descEl = pm.getElementsByTagName("description")[0];
+                    const descripcion = descEl ? descEl.textContent.trim() : '';
+                    const numeroPaquete = descripcion || nombre;
+
                     paradas.push({
                         id: Date.now() + i,
                         direccion: nombre,
                         lat: lat,
                         lng: lon,
-                        paquete: nombre,
+                        paquete: numeroPaquete,
                         estado: null
                     });
                     nuevas++;
