@@ -23,23 +23,29 @@
         <i class="fa-solid fa-gear text-lg"></i>
     </button>
 
-    <div id="search-panel" class="absolute top-4 right-4 left-16 z-10 max-w-md md:mx-auto bg-white/95 backdrop-blur-md p-4 rounded-2xl shadow-xl border border-gray-100 flex flex-col gap-3">
-        <div class="relative">
-            <div class="flex items-center gap-2 bg-gray-100 p-3 rounded-xl border border-gray-200">
-                <i class="fa-solid fa-magnifying-glass text-gray-400"></i>
-                <input id="search-input" type="text" autocomplete="off" placeholder="Buscar dirección en Hermosillo (o usa voz del teclado)..." class="bg-transparent w-full focus:outline-none text-sm font-medium text-gray-800">
+    <div id="search-panel" class="absolute top-4 right-4 left-16 z-10 max-w-md md:mx-auto bg-white/95 backdrop-blur-md p-2 rounded-2xl shadow-xl border border-gray-100 flex flex-col gap-2">
+        <button onclick="toggleBuscador()" class="w-full flex items-center justify-center gap-2 text-[11px] font-bold text-gray-400 py-1.5">
+            <i id="buscador-chevron" class="fa-solid fa-chevron-up"></i>
+            <span id="buscador-label">Ocultar buscador</span>
+        </button>
+        <div id="buscador-contenido" class="flex flex-col gap-3 px-2 pb-2">
+            <div class="relative">
+                <div class="flex items-center gap-2 bg-gray-100 p-3 rounded-xl border border-gray-200">
+                    <i class="fa-solid fa-magnifying-glass text-gray-400"></i>
+                    <input id="search-input" type="text" autocomplete="off" placeholder="Buscar dirección en Hermosillo (o usa voz del teclado)..." class="bg-transparent w-full focus:outline-none text-sm font-medium text-gray-800">
+                </div>
+                <div id="suggestions-box" class="hidden absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 max-h-56 overflow-y-auto no-scrollbar z-40"></div>
             </div>
-            <div id="suggestions-box" class="hidden absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 max-h-56 overflow-y-auto no-scrollbar z-40"></div>
-        </div>
 
-        <div class="flex items-center gap-2">
-            <div class="flex items-center gap-2 bg-gray-100 p-2.5 rounded-xl border border-gray-200 w-1/2">
-                <i class="fa-solid fa-box text-blue-500 text-xs"></i>
-                <input id="pkg-number" type="number" placeholder="N° Paquete" class="bg-transparent w-full focus:outline-none text-sm font-bold text-gray-800">
+            <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 bg-gray-100 p-2.5 rounded-xl border border-gray-200 w-1/2">
+                    <i class="fa-solid fa-box text-blue-500 text-xs"></i>
+                    <input id="pkg-number" type="number" placeholder="N° Paquete" class="bg-transparent w-full focus:outline-none text-sm font-bold text-gray-800">
+                </div>
+                <button onclick="agregarParadaManual()" class="w-1/2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold p-2.5 rounded-xl shadow-md active:scale-95 transition-all flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-plus"></i> Añadir Parada
+                </button>
             </div>
-            <button onclick="agregarParadaManual()" class="w-1/2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold p-2.5 rounded-xl shadow-md active:scale-95 transition-all flex items-center justify-center gap-2">
-                <i class="fa-solid fa-plus"></i> Añadir Parada
-            </button>
         </div>
     </div>
 
@@ -56,6 +62,12 @@
         </button>
     </div>
     <input type="file" id="kml-file-input" accept=".kml" class="hidden">
+
+    <!-- Toast de deshacer eliminación -->
+    <div id="undo-toast" class="hidden fixed left-1/2 -translate-x-1/2 z-40 bg-slate-900 text-white text-sm font-semibold px-4 py-3 rounded-2xl shadow-xl items-center gap-4" style="bottom: 44vh;">
+        <span>Parada eliminada</span>
+        <button onclick="deshacerEliminacion()" class="text-blue-400 font-black">DESHACER</button>
+    </div>
 
     <!-- Barra de navegación activa (modo Conducir) -->
     <div id="nav-bar" class="hidden absolute top-0 inset-x-0 z-30 bg-slate-900 text-white p-4 flex flex-col gap-3 shadow-xl">
@@ -81,8 +93,9 @@
     </div>
 
     <div id="route-panel" class="absolute bottom-0 inset-x-0 z-10 bg-white/95 backdrop-blur-md rounded-t-3xl shadow-[0_-8px_30px_rgb(0,0,0,0.12)] border-t border-gray-100 flex flex-col transition-all duration-300 transform h-[40vh]">
-        <div onclick="togglePanelDimension()" class="w-full flex justify-center py-3 cursor-pointer active:bg-gray-50 rounded-t-3xl">
+        <div onclick="togglePanelDimension()" class="w-full flex flex-col items-center justify-center py-2 cursor-pointer active:bg-gray-50 rounded-t-3xl gap-1">
             <div class="w-12 h-1.5 bg-gray-300 rounded-full"></div>
+            <span id="panel-estado-label" class="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Toca para plegar</span>
         </div>
 
         <div class="px-5 pb-3 flex justify-between items-center border-b border-gray-100">
@@ -149,7 +162,9 @@
         let map;
         let paradas = JSON.parse(localStorage.getItem('paradas_hmo')) || [];
         let currentPlaceData = null;
-        let panelExpandido = false;
+        const ESTADOS_PANEL = ['normal', 'expandido', 'colapsado'];
+        let panelEstadoIdx = 0;
+        let buscadorOculto = localStorage.getItem('buscador_oculto') === '1';
         let searchDebounceTimer = null;
 
         // --- Estado GPS / Navegación activa ---
@@ -171,6 +186,7 @@
         function initApp() {
             initMap();
             renderListaVisual();
+            aplicarEstadoBuscador();
         }
 
         function initMap() {
@@ -392,10 +408,32 @@
                         <button onclick="iniciarNavegacionParada(${parada.id})" class="bg-blue-50 hover:bg-blue-100 text-blue-600 p-2.5 rounded-xl text-xs font-bold active:scale-95 transition-all flex items-center gap-1">
                             <i class="fa-solid fa-car"></i> Conducir
                         </button>
-                        <button onclick="eliminarParada(${parada.id})" class="text-gray-300 hover:text-red-500 p-2"><i class="fa-solid fa-trash-can text-sm"></i></button>
+                        <button class="btn-borrar-largo text-gray-300 p-2 rounded-lg transition-colors" data-id="${parada.id}">
+                            <i class="fa-solid fa-trash-can text-sm pointer-events-none"></i>
+                        </button>
                     </div>
                 `;
                 listaContainer.appendChild(item);
+
+                const btnBorrar = item.querySelector('.btn-borrar-largo');
+                let pressTimer = null;
+                const iniciarPress = (e) => {
+                    e.preventDefault();
+                    btnBorrar.classList.add('bg-red-500', 'text-white');
+                    pressTimer = setTimeout(() => {
+                        eliminarParadaConDeshacer(parada.id);
+                    }, 650);
+                };
+                const cancelarPress = () => {
+                    clearTimeout(pressTimer);
+                    btnBorrar.classList.remove('bg-red-500', 'text-white');
+                };
+                btnBorrar.addEventListener('touchstart', iniciarPress, { passive: false });
+                btnBorrar.addEventListener('touchend', cancelarPress);
+                btnBorrar.addEventListener('touchcancel', cancelarPress);
+                btnBorrar.addEventListener('mousedown', iniciarPress);
+                btnBorrar.addEventListener('mouseup', cancelarPress);
+                btnBorrar.addEventListener('mouseleave', cancelarPress);
             });
         }
 
@@ -490,10 +528,40 @@
             }
         }
 
-        function eliminarParada(id) {
-            paradas = paradas.filter(p => p.id !== id);
+        let ultimaEliminada = null;
+        let ultimaEliminadaIndex = null;
+        let undoTimeout = null;
+
+        function eliminarParadaConDeshacer(id) {
+            const idx = paradas.findIndex(p => p.id === id);
+            if (idx === -1) return;
+
+            ultimaEliminada = paradas[idx];
+            ultimaEliminadaIndex = idx;
+            paradas.splice(idx, 1);
             guardarYActualizar();
             if (paradas.length === 0) limpiarOverview();
+
+            const toast = document.getElementById('undo-toast');
+            toast.classList.remove('hidden');
+            toast.classList.add('flex');
+            clearTimeout(undoTimeout);
+            undoTimeout = setTimeout(() => {
+                toast.classList.add('hidden');
+                toast.classList.remove('flex');
+                ultimaEliminada = null;
+            }, 5000);
+        }
+
+        function deshacerEliminacion() {
+            if (!ultimaEliminada) return;
+            paradas.splice(ultimaEliminadaIndex, 0, ultimaEliminada);
+            ultimaEliminada = null;
+            clearTimeout(undoTimeout);
+            guardarYActualizar();
+            const toast = document.getElementById('undo-toast');
+            toast.classList.add('hidden');
+            toast.classList.remove('flex');
         }
 
         function vaciarTodo() {
@@ -507,6 +575,18 @@
         function guardarYActualizar() {
             localStorage.setItem('paradas_hmo', JSON.stringify(paradas));
             renderListaVisual();
+            actualizarColoresOverview();
+        }
+
+        function actualizarColoresOverview() {
+            paradas.forEach((parada, i) => {
+                const marker = overviewMarkers[i + 1]; // [0] es la bodega
+                if (!marker) return;
+                let color = '#2563EB';
+                if (parada.estado === 'ENTREGADO') color = '#10B981';
+                else if (parada.estado === 'FALLIDO') color = '#EF4444';
+                marker.setIcon(crearIconoNumerado(i + 1, color));
+            });
         }
 
         function toggleConfig() {
@@ -514,13 +594,52 @@
         }
 
         function togglePanelDimension() {
+            panelEstadoIdx = (panelEstadoIdx + 1) % ESTADOS_PANEL.length;
+            aplicarEstadoPanel();
+        }
+
+        function aplicarEstadoPanel() {
             const panel = document.getElementById('route-panel');
-            if (panelExpandido) {
-                panel.style.height = "40vh";
+            const lista = document.getElementById('paradas-lista');
+            const label = document.getElementById('panel-estado-label');
+            const estado = ESTADOS_PANEL[panelEstadoIdx];
+
+            if (estado === 'normal') {
+                panel.style.height = '40vh';
+                lista.classList.remove('hidden');
+                label.textContent = 'Toca para expandir';
+            } else if (estado === 'expandido') {
+                panel.style.height = '85vh';
+                lista.classList.remove('hidden');
+                label.textContent = 'Toca para plegar lista';
             } else {
-                panel.style.height = "85vh";
+                panel.style.height = 'auto';
+                lista.classList.add('hidden');
+                label.textContent = 'Toca para ver lista';
             }
-            panelExpandido = !panelExpandido;
+        }
+
+        function toggleBuscador() {
+            buscadorOculto = !buscadorOculto;
+            localStorage.setItem('buscador_oculto', buscadorOculto ? '1' : '0');
+            aplicarEstadoBuscador();
+        }
+
+        function aplicarEstadoBuscador() {
+            const contenido = document.getElementById('buscador-contenido');
+            const chevron = document.getElementById('buscador-chevron');
+            const label = document.getElementById('buscador-label');
+            if (buscadorOculto) {
+                contenido.classList.add('hidden');
+                chevron.classList.remove('fa-chevron-up');
+                chevron.classList.add('fa-chevron-down');
+                label.textContent = 'Mostrar buscador';
+            } else {
+                contenido.classList.remove('hidden');
+                chevron.classList.remove('fa-chevron-down');
+                chevron.classList.add('fa-chevron-up');
+                label.textContent = 'Ocultar buscador';
+            }
         }
 
         // =========================================================
@@ -603,7 +722,9 @@
         function abrirNavegacionExterna() {
             const parada = paradas.find(p => p.id === paradaActualNavId);
             if (!parada) return;
-            const url = `geo:${parada.lat},${parada.lng}?q=${parada.lat},${parada.lng}(${encodeURIComponent('Paquete ' + parada.paquete)})`;
+            // google.navigation: inicia la conducción de una vez (turn-by-turn),
+            // a diferencia de geo: que solo muestra el punto en el mapa.
+            const url = `google.navigation:q=${parada.lat},${parada.lng}&mode=d`;
             window.location.href = url;
         }
 
